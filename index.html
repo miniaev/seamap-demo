@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>SEAMAP · Côte d'Azur</title>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -101,12 +101,45 @@
 
   .maplibregl-ctrl-attrib{display:none!important}
 
+  /* ---------- mobile ---------- */
   @media (max-width:760px){
-    .panel{width:238px;right:16px}
-    .comfort{left:16px;top:86px}
-    .logo{left:16px;top:14px}
-    .logo svg{width:96px}
-    .brand h1{font-size:19px}
+    html,body{height:100dvh}
+    .veil::before{background:
+      linear-gradient(to top, rgba(6,14,24,.92) 0%, rgba(6,14,24,.45) 18%, rgba(6,14,24,0) 36%),
+      linear-gradient(to bottom, rgba(6,14,24,.6) 0%, rgba(6,14,24,0) 20%)}
+    .logo{left:14px;top:12px}
+    .logo svg{width:78px}
+    header{padding:20px 14px 0;justify-content:flex-end}
+    .brand{text-align:right}
+    .brand h1{display:none}
+    .brand .sub{font-size:8px;letter-spacing:.22em;text-indent:0;margin-top:0}
+    .toolbar{top:auto;bottom:140px;right:10px;flex-direction:column;gap:8px}
+    .toolbar button{width:32px;height:32px}
+    .comfort{left:14px;top:62px;gap:10px}
+    .ring{width:62px;height:62px}
+    .ring svg{width:62px;height:62px}
+    .ring .num span{font-size:21px}
+    .ring .num small{font-size:6px}
+    .comfort .info .cap{font-size:7.5px;letter-spacing:.22em;margin-bottom:3px}
+    .stars{font-size:9px;letter-spacing:3px;margin-bottom:2px}
+    .verdict{font-size:16px}
+    .hint{display:none}
+    /* панель погоды — компактная лента внизу с горизонтальной прокруткой */
+    .panel{top:auto;bottom:0;left:0;right:0;width:100%;transform:none;display:flex;
+      overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;pointer-events:auto;
+      padding:16px 6px calc(12px + env(safe-area-inset-bottom));
+      background:linear-gradient(to top, rgba(6,14,24,.95) 55%, rgba(6,14,24,.5) 82%, rgba(6,14,24,0) 100%)}
+    .panel::-webkit-scrollbar{display:none}
+    .row{flex:none;flex-direction:column;align-items:center;gap:5px;padding:0 15px;min-width:84px}
+    .row + .row{border-top:none;border-left:1px solid rgba(201,179,126,.16)}
+    .row .lead{display:none}
+    .row .ic{width:16px;height:16px}
+    .row .ic svg{width:15px;height:15px}
+    .row .val{font-size:20px}
+    .row .lbl{order:4;font-size:7.5px;letter-spacing:.16em}
+    footer{bottom:100px;padding:0 12px;justify-content:flex-end}
+    footer .legal{display:none}
+    footer .attr{font-size:7px}
   }
 </style>
 </head>
