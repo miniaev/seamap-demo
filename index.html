@@ -285,7 +285,7 @@ function buildRoutes(){
     new maplibregl.Marker({element:boat}).setLngLat(L.boat).addTo(map);
   }
 }
-map.on('load', () => { buildRoutes(); scheduleReload(true); });
+map.on('load', buildRoutes);
 
 document.querySelectorAll('.locs button').forEach(b => b.onclick = () => {
   const L = LOCATIONS[b.dataset.k];
@@ -687,7 +687,8 @@ async function refresh(spin){
   render();
 }
 render();                                // сразу показываем демо-значения
-updateTitleByPlace();                    // живые данные подтянутся после загрузки карты (scheduleReload)
+updateTitleByPlace();
+scheduleReload(true);                    // и тут же тянем живые данные
 setInterval(() => refresh(), 10*60*1000);   // автообновление каждые 10 минут
 </script>
 </body>
