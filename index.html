@@ -49,6 +49,13 @@
   .brand .sub{margin-top:6px;font-size:10px;font-weight:300;letter-spacing:.34em;text-indent:.34em;
     color:var(--text-dim);text-transform:uppercase}
   .brand .sub b{color:var(--gold);font-weight:400}
+  .locs{margin-top:9px;pointer-events:auto;display:flex;gap:12px;align-items:center;justify-content:center;
+    color:rgba(233,228,214,.3);font-size:9px}
+  .locs button{background:none;border:none;cursor:pointer;font-family:'Jost',sans-serif;font-size:9.5px;
+    font-weight:300;letter-spacing:.28em;color:var(--text-dim);text-transform:uppercase;padding:2px 0 3px;
+    border-bottom:1px solid transparent;transition:.25s}
+  .locs button.on{color:var(--gold-bright);border-bottom-color:rgba(201,179,126,.55)}
+  .locs button:hover{color:var(--gold-bright)}
 
   .toolbar{position:absolute;top:24px;right:28px;display:flex;gap:10px;pointer-events:auto}
   .toolbar button{width:34px;height:34px;border-radius:50%;cursor:pointer;
@@ -113,6 +120,8 @@
     .brand{text-align:right}
     .brand h1{display:none}
     .brand .sub{font-size:8px;letter-spacing:.22em;text-indent:0;margin-top:0}
+    .locs{justify-content:flex-end;margin-top:7px}
+    .locs button{font-size:8.5px}
     .toolbar{top:auto;bottom:140px;right:10px;flex-direction:column;gap:8px}
     .toolbar button{width:32px;height:32px}
     .comfort{left:14px;top:62px;gap:10px}
@@ -166,8 +175,11 @@
 
 <header>
   <div class="brand">
-    <h1>SEAMAP · CÔTE D'AZUR</h1>
+    <h1 id="locTitle">SEAMAP · CÔTE D'AZUR</h1>
     <div class="sub" id="status">ЗАГРУЗКА ПРОГНОЗА · <b>OPEN-METEO</b></div>
+    <div class="locs">
+      <button data-k="azur" class="on">Côte d'Azur</button><span>·</span><button data-k="cyprus">Cyprus</button>
+    </div>
   </div>
 </header>
 
@@ -205,17 +217,30 @@
 
 <script>
 /* ================= CONFIG ================= */
-const LOC = { name:'Monaco', lat:43.712, lon:7.437 };          // точка прогноза
-const VIEW = { center:[7.42,43.665], zoom:11.05 };
-const BBOX = { w:6.95, e:7.90, s:43.35, n:43.95 };             // сетка ветра
+const LOCATIONS = {
+  azur: {
+    label:"CÔTE D'AZUR",
+    loc:{ name:'Monaco', lat:43.712, lon:7.437 },
+    view:{ center:[7.42,43.665], zoom:11.05 },
+    bbox:{ w:6.95, e:7.90, s:43.35, n:43.95 },
+    route:[[7.4262,43.7345],[7.468,43.705],[7.545,43.664],[7.505,43.596],[7.385,43.586],[7.318,43.652]],
+    boat:[7.545,43.664],
+    sea:[[6.9,43.30],[7.98,43.30],[7.98,43.75],[7.53,43.775],[7.42,43.72],[7.29,43.685],[7.13,43.635],[6.9,43.60]]
+  },
+  cyprus: {
+    label:'CYPRUS',
+    loc:{ name:'Limassol', lat:34.63, lon:33.05 },
+    view:{ center:[33.03,34.53], zoom:10.2 },
+    bbox:{ w:31.9, e:34.7, s:33.9, n:35.45 },
+    route:[[33.007,34.665],[33.06,34.60],[33.17,34.55],[33.05,34.48],[32.88,34.53],[32.94,34.62]],
+    boat:[33.17,34.55],
+    sea:[[31.9,33.9],[34.7,33.9],[34.7,34.95],[34.0,34.95],[33.6,34.86],[33.02,34.62],[32.6,34.60],[32.3,34.70],[31.9,34.72]]
+  }
+};
+let CUR='azur';
+let LOC=LOCATIONS.azur.loc, VIEW=LOCATIONS.azur.view, BBOX=LOCATIONS.azur.bbox,
+    ROUTE=LOCATIONS.azur.route, BOAT_AT=LOCATIONS.azur.boat, SEA=LOCATIONS.azur.sea;
 const GRID_N = 5;
-
-// маршрут (декоративный): Port Hercule → море
-const ROUTE = [[7.4262,43.7345],[7.468,43.705],[7.545,43.664],[7.505,43.596],[7.385,43.586],[7.318,43.652]];
-const BOAT_AT = [7.545,43.664];
-
-// море (для слоя волн) — грубый полигон юго-восточнее береговой линии
-const SEA = [[6.9,43.30],[7.98,43.30],[7.98,43.75],[7.53,43.775],[7.42,43.72],[7.29,43.685],[7.13,43.635],[6.9,43.60]];
 
 /* ================= MAP ================= */
 const map = new maplibregl.Map({
@@ -235,20 +260,39 @@ const map = new maplibregl.Map({
   }
 });
 
-map.on('load', () => {
-  map.addSource('route', { type:'geojson',
-    data:{ type:'Feature', geometry:{ type:'LineString', coordinates:ROUTE }}});
-  map.addLayer({ id:'route-line', type:'line', source:'route',
-    paint:{ 'line-color':'rgba(240,236,222,.85)', 'line-width':1.4, 'line-dasharray':[.1,2.4] },
-    layout:{ 'line-cap':'round' }});
+let routeMarkers = [];
+function buildRoute(){
+  routeMarkers.forEach(m => m.remove()); routeMarkers = [];
+  const data = { type:'Feature', geometry:{ type:'LineString', coordinates:ROUTE }};
+  if (map.getSource('route')) map.getSource('route').setData(data);
+  else {
+    map.addSource('route', { type:'geojson', data });
+    map.addLayer({ id:'route-line', type:'line', source:'route',
+      paint:{ 'line-color':'rgba(240,236,222,.85)', 'line-width':1.4, 'line-dasharray':[.1,2.4] },
+      layout:{ 'line-cap':'round' }});
+  }
   ROUTE.forEach(c => {
     if (c[0]===BOAT_AT[0] && c[1]===BOAT_AT[1]) return;
     const el = document.createElement('div'); el.className='wpt';
-    new maplibregl.Marker({element:el}).setLngLat(c).addTo(map);
+    routeMarkers.push(new maplibregl.Marker({element:el}).setLngLat(c).addTo(map));
   });
   const boat = document.createElement('div'); boat.className='boat';
-  new maplibregl.Marker({element:boat}).setLngLat(BOAT_AT).addTo(map);
-});
+  routeMarkers.push(new maplibregl.Marker({element:boat}).setLngLat(BOAT_AT).addTo(map));
+}
+map.on('load', buildRoute);
+
+function applyLocation(key){
+  if (key===CUR) return;
+  CUR = key; const L = LOCATIONS[key];
+  LOC=L.loc; VIEW=L.view; BBOX=L.bbox; ROUTE=L.route; BOAT_AT=L.boat; SEA=L.sea;
+  document.getElementById('locTitle').textContent = 'SEAMAP · ' + L.label;
+  document.querySelectorAll('.locs button').forEach(b => b.classList.toggle('on', b.dataset.k===key));
+  windField = null; particles = []; crests = [];
+  if (map.isStyleLoaded()) buildRoute();
+  map.flyTo({ center:VIEW.center, zoom:VIEW.zoom, duration:2600, essential:true });
+  refresh();
+}
+document.querySelectorAll('.locs button').forEach(b => b.onclick = () => applyLocation(b.dataset.k));
 
 /* ================= PANEL ================= */
 const IC = {
@@ -441,7 +485,7 @@ function sizeCanvases(){
 sizeCanvases();
 addEventListener('resize', () => { sizeCanvases(); particles=[]; crests=[]; });
 
-const DEG_PER_M = 1/111000, WIND_SPEED = 9;  // визуальный множитель
+const DEG_PER_M = 1/111000, WIND_SPEED = 2.2;  // визуальный множитель
 let particles = [];
 function viewBounds(pad=0.08){
   const b = map.getBounds();
@@ -489,7 +533,7 @@ function frame(){
   /* --- wind --- */
   if (showWind){
     wctx.globalCompositeOperation='destination-in';
-    wctx.fillStyle='rgba(0,0,0,0.93)';
+    wctx.fillStyle='rgba(0,0,0,0.955)';
     wctx.fillRect(0,0,elW,elH);
     wctx.globalCompositeOperation='source-over';
 
