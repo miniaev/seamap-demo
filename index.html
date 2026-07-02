@@ -56,6 +56,18 @@
     border-bottom:1px solid transparent;transition:.25s}
   .locs button.on{color:var(--gold-bright);border-bottom-color:rgba(201,179,126,.55)}
   .locs button:hover{color:var(--gold-bright)}
+  .search{margin-top:10px;pointer-events:auto;background:none;border:none;outline:none;
+    border-bottom:1px solid rgba(201,179,126,.28);padding:3px 6px;width:210px;text-align:center;
+    font-family:'Jost',sans-serif;font-size:9.5px;font-weight:300;letter-spacing:.25em;text-transform:uppercase;
+    color:var(--text);transition:.25s}
+  .search::placeholder{color:rgba(233,228,214,.35)}
+  .search:focus{border-bottom-color:var(--gold)}
+
+  /* точка прогноза — центр карты */
+  .reticle{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:4;pointer-events:none;
+    width:14px;height:14px;border:1px solid rgba(232,217,174,.5);border-radius:50%}
+  .reticle::after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    width:3px;height:3px;border-radius:50%;background:rgba(232,217,174,.9)}
 
   .toolbar{position:absolute;top:24px;right:28px;display:flex;gap:10px;pointer-events:auto}
   .toolbar button{width:34px;height:34px;border-radius:50%;cursor:pointer;
@@ -158,6 +170,7 @@
 <canvas id="swell" class="fx"></canvas>
 <canvas id="wind" class="fx"></canvas>
 <div class="veil"></div>
+<div class="reticle"></div>
 
 <div class="logo"><svg viewBox="486.12 233.96 287.18 126.62" xmlns="http://www.w3.org/2000/svg">
 <path d="M 650.925781,300.714844 L 629.054688,300.714844 L 629.054688,290.347656 L 647.816406,290.347656 L 647.816406,282.871094 L 629.054688,282.871094 L 629.054688,272.734375 L 650.121094,272.734375 L 650.121094,265.261719 L 621.292969,265.261719 L 621.292969,308.191406 L 650.925781,308.191406 Z M 650.925781,300.714844"/>
@@ -180,6 +193,7 @@
     <div class="locs">
       <button data-k="azur" class="on">Côte d'Azur</button><span>·</span><button data-k="cyprus">Cyprus</button>
     </div>
+    <input id="q" class="search" type="text" placeholder="Найти место…" autocomplete="off">
   </div>
 </header>
 
@@ -217,30 +231,24 @@
 
 <script>
 /* ================= CONFIG ================= */
+/* Пресеты — только «закладки» с маршрутами. Данные глобальные:
+   прогноз берётся для центра карты, сетка ветра — под текущий вьюпорт. */
 const LOCATIONS = {
   azur: {
     label:"CÔTE D'AZUR",
-    loc:{ name:'Monaco', lat:43.712, lon:7.437 },
     view:{ center:[7.42,43.665], zoom:11.05 },
-    bbox:{ w:6.95, e:7.90, s:43.35, n:43.95 },
     route:[[7.4262,43.7345],[7.468,43.705],[7.545,43.664],[7.505,43.596],[7.385,43.586],[7.318,43.652]],
-    boat:[7.545,43.664],
-    sea:[[6.9,43.30],[7.98,43.30],[7.98,43.75],[7.53,43.775],[7.42,43.72],[7.29,43.685],[7.13,43.635],[6.9,43.60]]
+    boat:[7.545,43.664]
   },
   cyprus: {
     label:'CYPRUS',
-    loc:{ name:'Larnaca', lat:34.85, lon:33.70 },
     view:{ center:[33.72,34.78], zoom:10.6 },
-    bbox:{ w:31.9, e:34.7, s:33.9, n:35.45 },
     route:[[33.6404,34.9184],[33.70,34.88],[33.78,34.82],[33.72,34.74],[33.60,34.76],[33.615,34.85]],
-    boat:[33.78,34.82],
-    sea:[[31.9,33.9],[34.7,33.9],[34.7,34.95],[34.0,34.95],[33.6,34.86],[33.02,34.62],[32.6,34.60],[32.3,34.70],[31.9,34.72]]
+    boat:[33.78,34.82]
   }
 };
-let CUR='azur';
-let LOC=LOCATIONS.azur.loc, VIEW=LOCATIONS.azur.view, BBOX=LOCATIONS.azur.bbox,
-    ROUTE=LOCATIONS.azur.route, BOAT_AT=LOCATIONS.azur.boat, SEA=LOCATIONS.azur.sea;
-const GRID_N = 5;
+let VIEW = LOCATIONS.azur.view;
+const BASE_ZOOM = 11.05, GRID_N = 5;
 
 /* ================= MAP ================= */
 const map = new maplibregl.Map({
@@ -260,39 +268,72 @@ const map = new maplibregl.Map({
   }
 });
 
-let routeMarkers = [];
-function buildRoute(){
-  routeMarkers.forEach(m => m.remove()); routeMarkers = [];
-  const data = { type:'Feature', geometry:{ type:'LineString', coordinates:ROUTE }};
-  if (map.getSource('route')) map.getSource('route').setData(data);
-  else {
-    map.addSource('route', { type:'geojson', data });
-    map.addLayer({ id:'route-line', type:'line', source:'route',
-      paint:{ 'line-color':'rgba(240,236,222,.85)', 'line-width':1.4, 'line-dasharray':[.1,2.4] },
-      layout:{ 'line-cap':'round' }});
+function buildRoutes(){
+  const feats = Object.values(LOCATIONS).map(L =>
+    ({ type:'Feature', geometry:{ type:'LineString', coordinates:L.route }}));
+  map.addSource('route', { type:'geojson', data:{ type:'FeatureCollection', features:feats }});
+  map.addLayer({ id:'route-line', type:'line', source:'route',
+    paint:{ 'line-color':'rgba(240,236,222,.85)', 'line-width':1.4, 'line-dasharray':[.1,2.4] },
+    layout:{ 'line-cap':'round' }});
+  for (const L of Object.values(LOCATIONS)){
+    L.route.forEach(c => {
+      if (c[0]===L.boat[0] && c[1]===L.boat[1]) return;
+      const el = document.createElement('div'); el.className='wpt';
+      new maplibregl.Marker({element:el}).setLngLat(c).addTo(map);
+    });
+    const boat = document.createElement('div'); boat.className='boat';
+    new maplibregl.Marker({element:boat}).setLngLat(L.boat).addTo(map);
   }
-  ROUTE.forEach(c => {
-    if (c[0]===BOAT_AT[0] && c[1]===BOAT_AT[1]) return;
-    const el = document.createElement('div'); el.className='wpt';
-    routeMarkers.push(new maplibregl.Marker({element:el}).setLngLat(c).addTo(map));
-  });
-  const boat = document.createElement('div'); boat.className='boat';
-  routeMarkers.push(new maplibregl.Marker({element:boat}).setLngLat(BOAT_AT).addTo(map));
 }
-map.on('load', buildRoute);
+map.on('load', () => { buildRoutes(); scheduleReload(true); });
 
-function applyLocation(key){
-  if (key===CUR) return;
-  CUR = key; const L = LOCATIONS[key];
-  LOC=L.loc; VIEW=L.view; BBOX=L.bbox; ROUTE=L.route; BOAT_AT=L.boat; SEA=L.sea;
-  document.getElementById('locTitle').textContent = 'SEAMAP · ' + L.label;
-  document.querySelectorAll('.locs button').forEach(b => b.classList.toggle('on', b.dataset.k===key));
-  windField = null; particles = []; crests = [];
-  if (map.isStyleLoaded()) buildRoute();
-  map.flyTo({ center:VIEW.center, zoom:VIEW.zoom, duration:2600, essential:true });
-  refresh();
+document.querySelectorAll('.locs button').forEach(b => b.onclick = () => {
+  const L = LOCATIONS[b.dataset.k];
+  map.flyTo({ center:L.view.center, zoom:L.view.zoom, duration:2600, essential:true });
+});
+
+/* заголовок и подсветка пресета по близости к центру карты */
+function updateTitleByPlace(){
+  const c = map.getCenter();
+  let best=null, bd=1e9;
+  for (const [k,L] of Object.entries(LOCATIONS)){
+    const d = Math.hypot(c.lng-L.view.center[0], c.lat-L.view.center[1]);
+    if (d<bd){ bd=d; best=k; }
+  }
+  const isPreset = bd < 1.6;
+  document.getElementById('locTitle').textContent = isPreset ? 'SEAMAP · '+LOCATIONS[best].label : 'SEAMAP';
+  document.querySelectorAll('.locs button').forEach(b => b.classList.toggle('on', isPreset && b.dataset.k===best));
 }
-document.querySelectorAll('.locs button').forEach(b => b.onclick = () => applyLocation(b.dataset.k));
+
+/* поиск места — Open-Meteo geocoding */
+const qEl = document.getElementById('q');
+qEl.addEventListener('keydown', async e => {
+  if (e.key!=='Enter' || !qEl.value.trim()) return;
+  try{
+    const g = await fetchJSON('https://geocoding-api.open-meteo.com/v1/search?count=1&language=ru&name='+encodeURIComponent(qEl.value.trim()));
+    const p = g.results && g.results[0];
+    if (p){ map.flyTo({ center:[p.longitude,p.latitude], zoom:10.5, duration:2600, essential:true }); qEl.value=''; qEl.blur(); }
+    else { qEl.value=''; qEl.placeholder='НЕ НАЙДЕНО…'; setTimeout(()=>qEl.placeholder='НАЙТИ МЕСТО…', 2000); }
+  }catch(_){}
+});
+
+/* перезагрузка данных при перемещении карты */
+let lastLoad = { lon:999, lat:999, zoom:0 };
+function scheduleReload(force){
+  const c = map.getCenter(), z = map.getZoom();
+  const b = map.getBounds(), wd = Math.max(b.getEast()-b.getWest(), 0.01);
+  if (force || Math.abs(c.lng-lastLoad.lon) > wd*0.18 || Math.abs(c.lat-lastLoad.lat) > wd*0.12
+      || Math.abs(z-lastLoad.zoom) > 0.8){
+    lastLoad = { lon:c.lng, lat:c.lat, zoom:z };
+    refresh();
+  }
+}
+let mvTimer = null;
+map.on('moveend', () => {
+  updateTitleByPlace();
+  clearTimeout(mvTimer);
+  mvTimer = setTimeout(() => scheduleReload(false), 500);
+});
 
 /* ================= PANEL ================= */
 const IC = {
@@ -359,11 +400,12 @@ function hourIdx(hourly, isoNow){
 }
 
 async function loadWeather(){
-  const base = `latitude=${LOC.lat}&longitude=${LOC.lon}&timezone=auto`;
+  const ctr = map.getCenter();
+  const base = `latitude=${ctr.lat.toFixed(3)}&longitude=${ctr.lng.toFixed(3)}&timezone=auto`;
   const wURL = `https://api.open-meteo.com/v1/forecast?${base}&wind_speed_unit=kn`+
     `&current=temperature_2m,precipitation,cloud_cover,wind_speed_10m,wind_direction_10m,wind_gusts_10m`+
     `&hourly=visibility,uv_index&forecast_days=1`;
-  const mURL = `https://marine-api.open-meteo.com/v1/marine?${base}`+
+  const mURL = `https://marine-api.open-meteo.com/v1/marine?${base}&cell_selection=sea`+
     `&current=wave_height,wave_direction,wave_period,sea_surface_temperature,ocean_current_velocity,ocean_current_direction`;
 
   const [wr, mr] = await Promise.allSettled([fetchJSON(wURL), fetchJSON(mURL)]);
@@ -375,21 +417,26 @@ async function loadWeather(){
     if (h){ W.visKm = (h.visibility?.[i] ?? 22000)/1000; W.uv = h.uv_index?.[i] ?? W.uv; }
     ok = true;
   }
-  if (mr.status==='fulfilled' && mr.value.current){
-    const c = mr.value.current;
-    W.waveH = c.wave_height ?? W.waveH; W.waveDir = c.wave_direction ?? W.waveDir;
-    W.wavePer = c.wave_period ?? W.wavePer;
-    W.tWater = c.sea_surface_temperature ?? W.tWater;
-    if (c.ocean_current_velocity!=null) W.curKn = c.ocean_current_velocity*0.539957; // км/ч → узлы
-    W.curDir = c.ocean_current_direction ?? W.curDir;
+  if (mr.status==='fulfilled' && mr.value.current && mr.value.current.wave_height!=null){
+    const m = mr.value.current;
+    W.waveH = m.wave_height; W.waveDir = m.wave_direction; W.wavePer = m.wave_period;
+    W.tWater = m.sea_surface_temperature;
+    W.curKn = m.ocean_current_velocity!=null ? m.ocean_current_velocity*0.539957 : null; // км/ч → узлы
+    W.curDir = m.ocean_current_direction;
+  } else {
+    // центр карты далеко от моря — морские параметры недоступны
+    W.waveH = W.waveDir = W.wavePer = W.tWater = W.curKn = W.curDir = null;
   }
   W.demo = !ok; W.updatedAt = Date.now();
 }
 
 async function loadWindField(){
+  const vb = viewBounds(0.15);
+  const s = Math.max(-85, vb.s), n = Math.min(85, vb.n);
+  const w = Math.max(-179.9, vb.w), e = Math.min(179.9, vb.e);
   const lats=[], lons=[];
-  for (let j=0;j<GRID_N;j++) lats.push(BBOX.s + (BBOX.n-BBOX.s)*j/(GRID_N-1));
-  for (let i=0;i<GRID_N;i++) lons.push(BBOX.w + (BBOX.e-BBOX.w)*i/(GRID_N-1));
+  for (let j=0;j<GRID_N;j++) lats.push(s + (n-s)*j/(GRID_N-1));
+  for (let i=0;i<GRID_N;i++) lons.push(w + (e-w)*i/(GRID_N-1));
   const la=[], lo=[];
   for (const lat of lats) for (const lon of lons){ la.push(lat.toFixed(3)); lo.push(lon.toFixed(3)); }
   try{
@@ -461,11 +508,15 @@ function render(){
   document.getElementById('ringArc').style.strokeDashoffset = 264*(1-c.s/100);
   updateStatus();
 }
+function toDMS(v,pos,neg){ const a=Math.abs(v), d=a|0, m=Math.round((a-d)*60);
+  return d+'°'+String(m).padStart(2,'0')+'′'+(v>=0?pos:neg); }
 function updateStatus(){
   const min = Math.round((Date.now()-W.updatedAt)/60000);
   const when = min<1 ? 'ТОЛЬКО ЧТО' : `${min} МИН НАЗАД`;
+  const c = map.getCenter();
+  const cs = toDMS(c.lat,'N','S')+'&nbsp;'+toDMS(c.lng,'E','W');
   document.getElementById('status').innerHTML =
-    (W.demo ? 'ДЕМО-ДАННЫЕ · ' : `ОБНОВЛЕНО ${when} · `) + '<b>OPEN-METEO</b>';
+    cs + ' · ' + (W.demo ? 'ДЕМО-ДАННЫЕ · ' : `ОБНОВЛЕНО ${when} · `) + '<b>OPEN-METEO</b>';
 }
 setInterval(updateStatus, 30000);
 
@@ -503,13 +554,45 @@ function targetCount(){
 }
 
 /* ================= SWELL CRESTS ================= */
+/* глобальная маска суши: world-atlas land-50m (TopoJSON), декодируем сами */
+let landRings = null; // [{bbox:[w,s,e,n], pts:[[lon,lat],...]}]
+(async function loadLandMask(){
+  try{
+    const topo = await fetch('https://unpkg.com/world-atlas@2.0.2/land-50m.json').then(r=>r.json());
+    const sc = topo.transform.scale, tr = topo.transform.translate;
+    const arcs = topo.arcs.map(a => { let x=0,y=0;
+      return a.map(([dx,dy]) => { x+=dx; y+=dy; return [x*sc[0]+tr[0], y*sc[1]+tr[1]]; }); });
+    const rings = [];
+    const geoms = topo.objects.land.geometries ?? [topo.objects.land];
+    for (const g of geoms){
+      const polys = g.type==='Polygon' ? [g.arcs] : g.arcs;
+      for (const poly of polys) for (const ringArcs of poly){
+        let ring = [];
+        for (const ai of ringArcs){
+          const a = ai>=0 ? arcs[ai] : arcs[~ai].slice().reverse();
+          ring = ring.concat(a);
+        }
+        let w=180,s=90,e=-180,n=-90;
+        for (const p of ring){ if(p[0]<w)w=p[0]; if(p[0]>e)e=p[0]; if(p[1]<s)s=p[1]; if(p[1]>n)n=p[1]; }
+        rings.push({ bbox:[w,s,e,n], pts:ring });
+      }
+    }
+    landRings = rings;
+  }catch(_){ landRings = null; }
+})();
 function inSea(lon,lat){
-  let inside=false;
-  for (let i=0,j=SEA.length-1;i<SEA.length;j=i++){
-    const [xi,yi]=SEA[i],[xj,yj]=SEA[j];
-    if ((yi>lat)!==(yj>lat) && lon < (xj-xi)*(lat-yi)/(yj-yi)+xi) inside=!inside;
+  if (!landRings) return false;          // маска ещё грузится — волны подождут
+  let inside = false;
+  for (const r of landRings){
+    const [w,s,e,n] = r.bbox;
+    if (lon<w || lon>e || lat<s || lat>n) continue;
+    const p = r.pts;
+    for (let i=0,j=p.length-1;i<p.length;j=i++){
+      if ((p[i][1]>lat)!==(p[j][1]>lat) &&
+          lon < (p[j][0]-p[i][0])*(lat-p[i][1])/(p[j][1]-p[i][1])+p[i][0]) inside=!inside;
+    }
   }
-  return inside;
+  return !inside;
 }
 let crests = [];
 function spawnCrest(){
@@ -528,7 +611,7 @@ map.on('move', () => { wctx.clearRect(0,0,windC.width,windC.height); particles.f
 function frame(){
   const elW = windC.clientWidth, elH = windC.clientHeight;
   // компенсация зума: держим экранную скорость частиц постоянной
-  const zScale = Math.pow(2, VIEW.zoom - map.getZoom());
+  const zScale = Math.pow(2, BASE_ZOOM - map.getZoom());
 
   /* --- wind --- */
   if (showWind){
@@ -603,9 +686,9 @@ async function refresh(spin){
   await Promise.allSettled([loadWeather(), loadWindField()]);
   render();
 }
-render();          // сразу показываем демо-значения
-refresh();         // затем подтягиваем живые данные
-setInterval(refresh, 10*60*1000);   // автообновление каждые 10 минут
+render();                                // сразу показываем демо-значения
+updateTitleByPlace();                    // живые данные подтянутся после загрузки карты (scheduleReload)
+setInterval(() => refresh(), 10*60*1000);   // автообновление каждые 10 минут
 </script>
 </body>
 </html>
