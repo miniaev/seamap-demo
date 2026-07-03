@@ -341,6 +341,7 @@ function scheduleReload(force){
   if (force || Math.abs(c.lng-lastLoad.lon) > wd*0.18 || Math.abs(c.lat-lastLoad.lat) > wd*0.12
       || Math.abs(z-lastLoad.zoom) > 0.8){
     lastLoad = { lon:c.lng, lat:c.lat, zoom:z };
+    particles.length = 0; crests.length = 0;   // пересоздаём эффекты под новое место
     refresh();
   }
 }
@@ -350,7 +351,7 @@ map.on('moveend', () => {
   clearTimeout(mvTimer);
   mvTimer = setTimeout(() => scheduleReload(false), 500);
   clearTimeout(aisTimer);
-  aisTimer = setTimeout(aisSubscribe, 800);   // подписка AIS следует за картой
+  aisTimer = setTimeout(aisRefresh, 800);   // подписка AIS следует за картой
 });
 
 /* ================= PANEL ================= */
@@ -661,6 +662,14 @@ function aisConnect(){
     if (showShips && aisRetry < 6){ aisRetry++; setTimeout(aisConnect, 2000*aisRetry); }
   };
 }
+function aisRefresh(){
+  // суда за пределами нового окна убираем сразу
+  const b = viewBounds(0.35);
+  for (const [k,s] of ships)
+    if (s.lon<b.w || s.lon>b.e || s.lat<b.s || s.lat>b.n) ships.delete(k);
+  if (aisWS && aisWS.readyState===1) aisSubscribe();
+  else { aisRetry = 0; aisConnect(); }
+}
 aisConnect();
 // суда без обновлений 10 минут — убираем
 setInterval(() => { const now=Date.now();
@@ -745,7 +754,9 @@ function frame(){
         sctx.quadraticCurveTo(pt.x+dx*B, pt.y+dy*B, pt.x+nx*L, pt.y+ny*L);
         sctx.stroke();
       }
-      if (c.life>c.ttl || !inSea(c.lon,c.lat)) { const nc=spawnCrest(); if(nc) Object.assign(c,nc); else c.life=0; }
+      if (c.life>c.ttl || !inSea(c.lon,c.lat) ||
+          pt.x<-600 || pt.x>elW+600 || pt.y<-600 || pt.y>elH+600)
+        { const nc=spawnCrest(); if(nc) Object.assign(c,nc); else c.life=0; }
     }
   }
 
