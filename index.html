@@ -640,10 +640,11 @@ function aisSubscribe(){
 function aisConnect(){
   if (aisWS){ try{ aisWS.onclose=null; aisWS.close(); }catch(_){} }
   try{ aisWS = new WebSocket('wss://stream.aisstream.io/v0/stream'); }catch(_){ return; }
+  aisWS.binaryType = 'arraybuffer';   // aisstream шлёт бинарные кадры
   aisWS.onopen = () => { aisRetry = 0; aisSubscribe(); };
   aisWS.onmessage = ev => {
     try{
-      const m = JSON.parse(ev.data);
+      const m = JSON.parse(typeof ev.data === 'string' ? ev.data : new TextDecoder().decode(ev.data));
       if (m.MessageType !== 'PositionReport') return;
       const p = m.Message.PositionReport, md = m.MetaData || {};
       const id = md.MMSI ?? p.UserID;
