@@ -32,6 +32,10 @@
   }
   .veil::after{content:"";position:absolute;inset:0;
     box-shadow:inset 0 0 180px 40px rgba(4,10,18,.55)}
+  .veil::before, .veil::after{transition:opacity .8s ease}
+  /* дневной режим — вуаль почти прозрачная, спутник во всей красе */
+  body.day .veil::before{opacity:.45}
+  body.day .veil::after{opacity:.35}
 
   /* ---------- logo ---------- */
   .logo{position:absolute;top:20px;left:34px;z-index:10;pointer-events:none;
@@ -200,6 +204,7 @@
 <div class="toolbar">
   <button id="btnWind" title="Ветер"><svg viewBox="0 0 24 24"><path d="M3 8h9a3 3 0 1 0-3-3M3 12h14a3 3 0 1 1-3 3M3 16h7a2.5 2.5 0 1 1-2.5 2.5"/></svg></button>
   <button id="btnSwell" title="Волны"><svg viewBox="0 0 24 24"><path d="M2 9c3-3 5-3 8 0s5 3 8 0M2 15c3-3 5-3 8 0s5 3 8 0"/></svg></button>
+  <button id="btnTheme" title="День / ночь"><svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
   <button id="btnRefresh" title="Обновить"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 6.3M20 5v6h-6"/></svg></button>
   <button id="btnFull" title="Во весь экран"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
 </div>
@@ -671,6 +676,33 @@ function frame(){
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+/* ================= THEME (день / ночь) ================= */
+const SUN_SVG = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 3v2.4M12 18.6V21M3 12h2.4M18.6 12H21M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7"/></svg>';
+const MOON_SVG = '<svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+let THEME = 'night', themeManual = false;
+function setTheme(mode){
+  THEME = mode;
+  document.body.classList.toggle('day', mode==='day');
+  const p = mode==='day'
+    ? { b:1.0,  c:0,    s:-0.04 }   // день: спутник без затемнения
+    : { b:0.92, c:0.06, s:-0.12 };  // ночь: приглушённый кинематографичный
+  const apply = () => {
+    map.setPaintProperty('sat','raster-brightness-max', p.b);
+    map.setPaintProperty('sat','raster-contrast', p.c);
+    map.setPaintProperty('sat','raster-saturation', p.s);
+  };
+  map.isStyleLoaded() ? apply() : map.once('load', apply);
+  btnTheme.innerHTML = mode==='day' ? SUN_SVG : MOON_SVG;
+}
+function autoTheme(){
+  if (themeManual) return;
+  const h = new Date().getHours();
+  setTheme(h>=7 && h<19 ? 'day' : 'night');
+}
+btnTheme.onclick = () => { themeManual = true; setTheme(THEME==='day' ? 'night' : 'day'); };
+autoTheme();
+setInterval(autoTheme, 60*1000);   // авто-переключение по часам устройства
 
 /* ================= TOOLBAR ================= */
 const dim = (btn,on) => btn.style.opacity = on ? 1 : .38;
