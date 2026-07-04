@@ -771,6 +771,29 @@ const PANTHEON = [
 ];
 let panData = {};
 try{ panData = JSON.parse(localStorage.getItem('seamap_pan_v1') || '{}'); }catch(_){}
+
+// демо-фолбэк: последние известные данные (MarineTraffic, 04.07.2026).
+// Используется, только пока яхта ни разу не выходила в эфир в нашем потоке.
+const PAN_FALLBACK = {
+  solaris: { lon:28.70, lat:40.96, sog:0, cog:52, heading:359, nav:5,
+    dest:'VEGA SHIPYARD', eta:{Month:5,Day:21,Hour:8,Minute:0}, draught:5.5,
+    len:'139', beam:'26', callsign:'E5U5170', mmsiActive:'518999189', agoMin:4 },
+  eclipse: { lon:29.55, lat:40.72, sog:0, cog:0, heading:0, nav:5,
+    dest:'IZMIT', eta:{Month:3,Day:28,Hour:8,Minute:0}, draught:5.8,
+    len:'162,5', beam:'22,4', callsign:'E5U5644', mmsiActive:'518999664', agoMin:6 }
+};
+for (const k in PAN_FALLBACK){
+  const f = PAN_FALLBACK[k], p = panData[k];
+  if (!p || !p.ts){
+    const { agoMin, ...rest } = f;
+    panData[k] = { ...rest, ts: Date.now() - agoMin*60000 };
+  } else {
+    // статические поля дозаполняем, если живые данные их ещё не принесли
+    for (const key of ['dest','eta','draught','len','beam','callsign'])
+      if (p[key] == null) p[key] = f[key];
+  }
+}
+
 let panWS = null, panRetry = 0;
 
 function yachtByMMSI(m){ m = String(m); return PANTHEON.find(y => y.mmsi && y.mmsi.includes(m)); }
