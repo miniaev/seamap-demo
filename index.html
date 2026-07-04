@@ -740,6 +740,13 @@ function aisRefresh(){
   if (aisWS && aisWS.readyState===1) aisSubscribe();
   else { aisRetry = 0; aisConnect(); }
 }
+// при старте оставляем в кэше только суда текущего района —
+// чтобы не ждать чужие регионы, а сразу видеть своё
+(function(){
+  const b = viewBounds(0.5);
+  for (const [k,s] of ships)
+    if (s.lon<b.w || s.lon>b.e || s.lat<b.s || s.lat>b.n) ships.delete(k);
+})();
 aisConnect();
 // суда без обновлений 12 часов — убираем (старые показываются притушенными)
 setInterval(() => { const now=Date.now();
