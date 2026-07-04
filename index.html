@@ -157,7 +157,12 @@
   .ais-pop .maplibregl-popup-tip{display:none}
   .ais-name{font-family:'Cormorant Garamond',serif;font-size:16px;color:var(--gold-bright);letter-spacing:.05em}
   .ais-meta{font-family:'Jost',sans-serif;font-size:9px;font-weight:300;letter-spacing:.2em;
-    color:var(--text-dim);text-transform:uppercase;margin-top:3px}
+    color:var(--text-dim);text-transform:uppercase;margin-top:3px;margin-bottom:6px}
+  .pp{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:2.5px 0;
+    border-top:1px solid rgba(201,179,126,.1);min-width:185px}
+  .pp span{font-family:'Jost',sans-serif;font-size:8px;font-weight:300;letter-spacing:.14em;
+    color:var(--text-dim);text-transform:uppercase;white-space:nowrap}
+  .pp b{font-family:'Cormorant Garamond',serif;font-size:13.5px;font-weight:500;color:var(--text);text-align:right}
 
   .maplibregl-ctrl-attrib{display:none!important}
 
@@ -597,7 +602,7 @@ const aisC = document.getElementById('ais'), actx = aisC.getContext('2d');
 let showWind = true, showSwell = true, showShips = true;
 
 function sizeCanvases(){
-  const el = map.getContainer(), dpr = Math.min(devicePixelRatio||1, 2);
+  const el = map.getContainer(), dpr = Math.min(devicePixelRatio||1, 1.5); // экономим GPU на retina
   for (const [c,ctx] of [[windC,wctx],[swellC,sctx],[aisC,actx]]){
     c.width = el.clientWidth*dpr; c.height = el.clientHeight*dpr;
     c.style.width = el.clientWidth+'px'; c.style.height = el.clientHeight+'px';
@@ -607,7 +612,8 @@ function sizeCanvases(){
 sizeCanvases();
 addEventListener('resize', () => { sizeCanvases(); particles=[]; crests=[]; });
 
-const DEG_PER_M = 1/111000, WIND_SPEED = 2.2;  // визуальный множитель
+const DEG_PER_M = 1/111000, WIND_SPEED = 4.4;  // визуальный множитель (для 30 fps)
+let fxSkip = false;
 let particles = [];
 function viewBounds(pad=0.08){
   const b = map.getBounds();
@@ -621,7 +627,7 @@ function spawnParticle(){
 }
 function targetCount(){
   const el = map.getContainer();
-  return Math.min(2200, Math.round(el.clientWidth*el.clientHeight/900));
+  return Math.min(1500, Math.round(el.clientWidth*el.clientHeight/1200));
 }
 
 /* ================= SWELL CRESTS ================= */
@@ -713,6 +719,7 @@ function aisConnect(){
       const p = m.Message.PositionReport, md = m.MetaData || {};
       const id = md.MMSI ?? p.UserID;
       const s = ships.get(id) || {};
+      s.mmsi = id; s.nav = p.NavigationalStatus;
       s.lon = p.Longitude; s.lat = p.Latitude;
       s.cog = (p.Cog!=null && p.Cog>=0 && p.Cog<360) ? p.Cog : (s.cog ?? 0);
       s.sog = (p.Sog!=null && p.Sog>=0 && p.Sog<102) ? p.Sog : 0;
@@ -752,15 +759,40 @@ map.on('click', e => {
     const p = panData[y.key]; if (!y.name || !p || p.lon==null) continue;
     const pt = map.project([p.lon,p.lat]);
     const d = Math.hypot(pt.x-e.point.x, pt.y-e.point.y);
-    if (d<bd){ bd=d; best={ name:y.name, sog:p.sog??0, cog:p.cog??0, lon:p.lon, lat:p.lat }; }
+    if (d<bd){ bd=d; best={ pan:y, o:p }; }
   }
   if (!best) return;
-  const kn = best.sog.toFixed(1).replace('.',',');
-  aisPopup = new maplibregl.Popup({ className:'ais-pop', closeButton:false, offset:12 })
-    .setLngLat([best.lon,best.lat])
-    .setHTML(`<div class="ais-name">${(best.name||'БЕЗ ИМЕНИ').replace(/</g,'&lt;')}</div>
-              <div class="ais-meta">${kn} уз · курс ${Math.round(best.cog)}°</div>`)
-    .addTo(map);
+  const o = best.o || best, esc = t => String(t).replace(/</g,'&lt;');
+  const pos = o.lat!=null ? toDMS(o.lat,'N','S')+' '+toDMS(o.lon,'E','W') : null;
+  const row = (l,v) => (v==null || v==='') ? '' : `<div class="pp"><span>${l}</span><b>${v}</b></div>`;
+  let html;
+  if (best.pan){
+    const st = panState(o);
+    html = `<div class="ais-name">${best.pan.name}</div>
+      <div class="ais-meta">IMO ${best.pan.imo} · MMSI ${o.mmsiActive||''}</div>`
+      + row('Связь', st.label)
+      + row('Скорость', o.sog!=null ? fmt(o.sog)+' уз' : null)
+      + row('Курс', o.cog!=null ? Math.round(o.cog)+'°' : null)
+      + row('Статус', NAVTXT[o.nav])
+      + row('Назначение', o.dest)
+      + row('ETA', o.eta ? String(o.eta.Day).padStart(2,'0')+'.'+String(o.eta.Month).padStart(2,'0')+' '+String(o.eta.Hour||0).padStart(2,'0')+':'+String(o.eta.Minute||0).padStart(2,'0') : null)
+      + row('Осадка', o.draught ? fmt(o.draught)+' м' : null)
+      + row('Габариты', o.len ? o.len+' × '+o.beam+' м' : null)
+      + row('Позывной', o.callsign)
+      + row('Флаг', o.mmsiActive ? midFlag(o.mmsiActive) : null)
+      + row('Позиция', pos)
+      + row('Обновлено', agoText(o.ts) + (o.fb ? ' · архив' : ''));
+  } else {
+    html = `<div class="ais-name">${esc(o.name||'БЕЗ ИМЕНИ')}</div>
+      <div class="ais-meta">${o.mmsi ? 'MMSI '+o.mmsi : ''}</div>`
+      + row('Скорость', o.sog!=null ? fmt(o.sog)+' уз' : null)
+      + row('Курс', o.cog!=null ? Math.round(o.cog)+'°' : null)
+      + row('Статус', NAVTXT[o.nav])
+      + row('Позиция', pos)
+      + row('Обновлено', agoText(o.ts));
+  }
+  aisPopup = new maplibregl.Popup({ className:'ais-pop', closeButton:false, offset:12, maxWidth:'270px' })
+    .setLngLat([o.lon,o.lat]).setHTML(html).addTo(map);
 });
 
 /* ================= ПАНТЕОН — именные яхты (глобальный трекинг) ================= */
@@ -772,22 +804,21 @@ const PANTHEON = [
 let panData = {};
 try{ panData = JSON.parse(localStorage.getItem('seamap_pan_v1') || '{}'); }catch(_){}
 
-// демо-фолбэк: последние известные данные (MarineTraffic, 04.07.2026).
-// Используется, только пока яхта ни разу не выходила в эфир в нашем потоке.
+// архивный фолбэк: снимок MarineTraffic от 04.07.2026 11:15 (UTC+3).
+// Показывается с пометкой «архив», пока яхта не выйдет в эфир в нашем потоке.
+const PAN_SNAP = Date.parse('2026-07-04T08:15:00Z');
 const PAN_FALLBACK = {
-  solaris: { lon:28.70, lat:40.96, sog:0, cog:52, heading:359, nav:5,
+  solaris: { fb:true, ts:PAN_SNAP, lon:28.70, lat:40.96, sog:0, cog:52, heading:359, nav:5,
     dest:'VEGA SHIPYARD', eta:{Month:5,Day:21,Hour:8,Minute:0}, draught:5.5,
-    len:'139', beam:'26', callsign:'E5U5170', mmsiActive:'518999189', agoMin:4 },
-  eclipse: { lon:29.55, lat:40.72, sog:0, cog:0, heading:0, nav:5,
+    len:'139', beam:'26', callsign:'E5U5170', mmsiActive:'518999189' },
+  eclipse: { fb:true, ts:PAN_SNAP, lon:29.55, lat:40.72, sog:0, cog:0, heading:0, nav:5,
     dest:'IZMIT', eta:{Month:3,Day:28,Hour:8,Minute:0}, draught:5.8,
-    len:'162,5', beam:'22,4', callsign:'E5U5644', mmsiActive:'518999664', agoMin:6 }
+    len:'162,5', beam:'22,4', callsign:'E5U5644', mmsiActive:'518999664' }
 };
 for (const k in PAN_FALLBACK){
   const f = PAN_FALLBACK[k], p = panData[k];
-  if (!p || !p.ts){
-    const { agoMin, ...rest } = f;
-    panData[k] = { ...rest, ts: Date.now() - agoMin*60000 };
-  } else {
+  if (!p || !p.live) panData[k] = { ...f };   // живых данных ещё не было — архив
+  else {
     // статические поля дозаполняем, если живые данные их ещё не принесли
     for (const key of ['dest','eta','draught','len','beam','callsign'])
       if (p[key] == null) p[key] = f[key];
@@ -814,6 +845,7 @@ function panConnect(){
       const y = yachtByMMSI(md.MMSI); if (!y) return;
       const p = panData[y.key] || {};
       p.mmsiActive = String(md.MMSI);
+      p.live = true; p.fb = false;          // пришли живые данные — архив больше не нужен
       if (m.MessageType === 'PositionReport'){
         const r = m.Message.PositionReport;
         p.lon = r.Longitude; p.lat = r.Latitude;
@@ -846,6 +878,7 @@ const NAVTXT = {0:'В пути',1:'На якоре',2:'Не управляетс
 function midFlag(m){ return ({'518':'Острова Кука','310':'Бермуды'})[String(m).slice(0,3)] || '—'; }
 function panState(p){
   if (!p || !p.ts) return { cls:'r', label:'НЕТ ДАННЫХ' };
+  if (p.fb) return { cls:'y', label:'АРХИВНЫЕ ДАННЫЕ' };
   const days = (Date.now()-p.ts)/86400000;
   if (days < 1) return { cls:'g', label:'НА СВЯЗИ' };
   const d = Math.floor(days);
@@ -882,7 +915,7 @@ function renderPantheon(){
       ['Позывной',  p.callsign || '—'],
       ['Флаг',      p.mmsiActive ? midFlag(p.mmsiActive) : '—'],
       ['Позиция',   p.lat!=null ? toDMS(p.lat,'N','S')+' '+toDMS(p.lon,'E','W') : '—'],
-      ['Обновлено', agoText(p.ts)]
+      ['Обновлено', agoText(p.ts) + (p.fb ? ' · архив' : '')]
     ];
     card.innerHTML = `
       <img src="${y.img}" alt="${y.name}">
@@ -911,6 +944,8 @@ addEventListener('keydown', e => { if (e.key==='Escape') closePantheon(); });
 map.on('move', () => { wctx.clearRect(0,0,windC.width,windC.height); particles.forEach(p=>{p.px=null;}); });
 
 function frame(){
+  fxSkip = !fxSkip;                 // 30 fps: вдвое меньше работы GPU, глазу не заметно
+  if (fxSkip){ requestAnimationFrame(frame); return; }
   const elW = windC.clientWidth, elH = windC.clientHeight;
   // компенсация зума: держим экранную скорость частиц постоянной
   const zScale = Math.pow(2, BASE_ZOOM - map.getZoom());
@@ -918,7 +953,7 @@ function frame(){
   /* --- wind --- */
   if (showWind){
     wctx.globalCompositeOperation='destination-in';
-    wctx.fillStyle='rgba(0,0,0,0.955)';
+    wctx.fillStyle='rgba(0,0,0,0.93)';
     wctx.fillRect(0,0,elW,elH);
     wctx.globalCompositeOperation='source-over';
 
@@ -948,14 +983,14 @@ function frame(){
   /* --- swell --- */
   sctx.clearRect(0,0,elW,elH);
   if (showSwell){
-    const need = 46;
+    const need = 36;
     while (crests.length<need){ const c=spawnCrest(); if(!c) break; crests.push(c); }
     const toDir = ((W.waveDir??210)+180)*Math.PI/180;      // куда идут волны
     const dx=Math.sin(toDir), dy=-Math.cos(toDir);          // экранный вектор
     const drift = (0.008 + (W.waveH||.3)*0.012);            // deg-скорость мала — двигаем в градусах
     sctx.lineWidth = 1.1;
     for (const c of crests){
-      c.lon += dx*drift*0.0016*zScale; c.lat -= dy*drift*0.0016*zScale; c.life++;
+      c.lon += dx*drift*0.0032*zScale; c.lat -= dy*drift*0.0032*zScale; c.life++;
       const pt = map.project([c.lon,c.lat]);
       const a = Math.sin(Math.PI*Math.min(c.life/c.ttl,1)) * 0.16;
       if (a>0.005 && pt.x>-80 && pt.x<elW+80 && pt.y>-80 && pt.y<elH+80){
@@ -991,15 +1026,20 @@ function frame(){
       const age = Math.min(1,(now-s.ts)/(6*60*1000));
       const a = 0.95 - age*0.55;
       actx.save(); actx.translate(pt.x,pt.y); actx.rotate((s.cog||0)*Math.PI/180);
-      actx.shadowColor = 'rgba(232,217,174,.7)';
       if (s.sog > 0.2){
+        // мягкое свечение — увеличенный полупрозрачный силуэт (дешевле shadowBlur)
+        actx.beginPath();
+        actx.moveTo(0,-9); actx.lineTo(5.2,7); actx.lineTo(0,4); actx.lineTo(-5.2,7); actx.closePath();
+        actx.fillStyle = `rgba(232,217,174,${a*.18})`; actx.fill();
         actx.beginPath();
         actx.moveTo(0,-6.5); actx.lineTo(3.6,5); actx.lineTo(0,2.8); actx.lineTo(-3.6,5); actx.closePath();
-        actx.fillStyle = `rgba(240,232,208,${a})`; actx.shadowBlur = 6; actx.fill();
+        actx.fillStyle = `rgba(240,232,208,${a})`; actx.fill();
         actx.strokeStyle = `rgba(201,179,126,${a})`; actx.lineWidth = .8; actx.stroke();
       } else {
+        actx.beginPath(); actx.arc(0,0,4.4,0,7);
+        actx.fillStyle = `rgba(232,217,174,${a*.16})`; actx.fill();
         actx.beginPath(); actx.arc(0,0,2.6,0,7);
-        actx.fillStyle = `rgba(222,215,192,${a*.85})`; actx.shadowBlur = 4; actx.fill();
+        actx.fillStyle = `rgba(222,215,192,${a*.85})`; actx.fill();
       }
       actx.restore();
       if (z>=12.2 && s.name){
@@ -1014,7 +1054,9 @@ function frame(){
       const pt = map.project([p.lon,p.lat]);
       if (pt.x<-60||pt.x>elW+60||pt.y<-60||pt.y>elH+60) continue;
       actx.save(); actx.translate(pt.x,pt.y); actx.rotate(((p.heading ?? p.cog ?? 0))*Math.PI/180);
-      actx.shadowColor = 'rgba(232,217,174,.9)'; actx.shadowBlur = 12;
+      actx.beginPath();
+      actx.moveTo(0,-12); actx.lineTo(7.2,0); actx.lineTo(0,12); actx.lineTo(-7.2,0); actx.closePath();
+      actx.fillStyle = 'rgba(232,217,174,.22)'; actx.fill();   // ореол
       actx.beginPath();
       actx.moveTo(0,-8); actx.lineTo(4.8,0); actx.lineTo(0,8); actx.lineTo(-4.8,0); actx.closePath();
       actx.fillStyle = 'rgba(236,222,182,.96)'; actx.fill();
