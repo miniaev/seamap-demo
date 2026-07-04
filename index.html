@@ -690,7 +690,7 @@ let ships = new Map(), aisWS = null, aisTimer = null, aisRetry = 0, aisPopup = n
 try{
   const cached = JSON.parse(localStorage.getItem('seamap_ships_v1') || '[]');
   const now = Date.now();
-  for (const [id,s] of cached) if (now - s.ts < 10*60*1000) ships.set(id, s);
+  for (const [id,s] of cached) if (now - s.ts < 12*3600*1000) ships.set(id, s);  // храним до 12 часов
 }catch(_){}
 function saveShips(){
   try{ localStorage.setItem('seamap_ships_v1', JSON.stringify([...ships.entries()].slice(-400))); }catch(_){}
@@ -741,9 +741,9 @@ function aisRefresh(){
   else { aisRetry = 0; aisConnect(); }
 }
 aisConnect();
-// суда без обновлений 10 минут — убираем
+// суда без обновлений 12 часов — убираем (старые показываются притушенными)
 setInterval(() => { const now=Date.now();
-  for (const [k,s] of ships) if (now-s.ts > 10*60*1000) ships.delete(k); }, 60*1000);
+  for (const [k,s] of ships) if (now-s.ts > 12*3600*1000) ships.delete(k); }, 60*1000);
 
 // карточка судна по клику
 map.on('click', e => {
@@ -1014,7 +1014,8 @@ function frame(){
     const now = Date.now(), z = map.getZoom();
     for (const s of ships.values()){
       // счисление: между AIS-обновлениями судно плавно движется по курсу
-      if (s.sog > 0.2){
+      // (только для свежих — судно из кэша с места не трогаем)
+      if (s.sog > 0.2 && now - s.ts < 5*60*1000){
         const dt = (now - (s.dr||now))/1000;
         const v = s.sog*0.514444*dt*DEG_PER_M, th = s.cog*Math.PI/180;
         s.lon += v*Math.sin(th)/Math.max(Math.cos(s.lat*Math.PI/180),.3);
@@ -1023,8 +1024,8 @@ function frame(){
       s.dr = now;
       const pt = map.project([s.lon,s.lat]);
       if (pt.x<-30||pt.x>elW+30||pt.y<-30||pt.y>elH+30) continue;
-      const age = Math.min(1,(now-s.ts)/(6*60*1000));
-      const a = 0.95 - age*0.55;
+      const age = Math.min(1,(now-s.ts)/(30*60*1000));   // затухание за 30 минут
+      const a = 0.95 - age*0.6;                          // старые — призраки, но видны
       actx.save(); actx.translate(pt.x,pt.y); actx.rotate((s.cog||0)*Math.PI/180);
       if (s.sog > 0.2){
         // мягкое свечение — увеличенный полупрозрачный силуэт (дешевле shadowBlur)
