@@ -608,21 +608,31 @@ function render(){
 
   // приливы
   const tr = document.getElementById('tideRow');
+  const cmTxt = v => (v>=0?'+':'−') + (Math.abs(v)<1 ? Math.round(Math.abs(v)*100)+' см' : fmt(Math.abs(v),2)+' м');
   if (W.tide && W.tide.h && W.tide.h[0]!=null){
     const h0 = W.tide.h[0], rising = (W.tide.h[1] ?? h0) >= h0;
-    setVal('tide', (h0>=0?'+':'−')+fmt(Math.abs(h0),2), 'м', rising ? 180 : 0);
+    if (Math.abs(h0) < 1) setVal('tide', (h0>=0?'+':'−')+Math.round(Math.abs(h0)*100), 'см', rising ? 180 : 0);
+    else                  setVal('tide', (h0>=0?'+':'−')+fmt(Math.abs(h0),2), 'м', rising ? 180 : 0);
     setVal('tidenext', W.tide.nextTime || '—', W.tide.nextLabel || '');
     // кривая уровня на 36 часов
     const H = W.tide.h.filter(v=>v!=null), n = H.length;
     if (n > 5){
       let mn = Math.min(...H), mx = Math.max(...H);
+      let iMx = H.indexOf(mx), iMn = H.indexOf(mn);
       if (mx-mn < 0.06){ const c=(mx+mn)/2; mx=c+0.03; mn=c-0.03; }
-      const X = i => (i/(n-1)*260).toFixed(1), Y = v => (38 - (v-mn)/(mx-mn)*30).toFixed(1);
+      const X = i => +(i/(n-1)*260).toFixed(1), Y = v => +(38 - (v-mn)/(mx-mn)*28).toFixed(1);
       let d = 'M'+X(0)+','+Y(H[0]);
       for (let i=1;i<n;i++) d += ' L'+X(i)+','+Y(H[i]);
+      const lbl = (i,v,above) => {
+        const x = Math.min(228, Math.max(6, X(i)-14));
+        const y = above ? Math.max(8, Y(v)-5) : Math.min(43, Y(v)+11);
+        return `<text x="${x}" y="${y}" font-family="Jost,sans-serif" font-size="7.5"
+          letter-spacing=".08em" fill="rgba(233,228,214,.6)">${cmTxt(v)}</text>`;
+      };
       document.getElementById('tideSvg').innerHTML =
         `<path d="${d}" fill="none" stroke="rgba(201,179,126,.6)" stroke-width="1.3"/>`+
-        `<circle cx="${X(0)}" cy="${Y(H[0])}" r="2.6" fill="#e8d9ae"/>`;
+        `<circle cx="${X(0)}" cy="${Y(H[0])}" r="2.6" fill="#e8d9ae"/>`+
+        lbl(iMx, H[iMx], true) + lbl(iMn, H[iMn], false);
       tr.style.display = 'block';
     } else tr.style.display = 'none';
   } else {
