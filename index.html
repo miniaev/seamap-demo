@@ -104,6 +104,8 @@
   .row .val{font-family:'Cormorant Garamond',serif;font-size:19px;font-weight:500;color:var(--text);white-space:nowrap;
     display:flex;align-items:baseline;gap:5px;text-shadow:0 1px 8px rgba(0,0,0,.7)}
   .row .val small{font-size:10px;font-family:'Jost';font-weight:300;letter-spacing:.12em;color:var(--gold);text-transform:uppercase}
+  .tiderow{padding:10px 0 2px;border-top:1px solid rgba(201,179,126,.13)}
+  .tiderow svg{display:block;width:100%;height:44px}
   .dirArrow{display:inline-block;width:11px;height:11px;transform-origin:center;transition:transform 1s ease}
   .dirArrow svg{width:11px;height:11px;stroke:var(--gold-bright);fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;display:block}
 
@@ -402,6 +404,8 @@ const IC = {
   wave:'<path d="M2 9c3-3 5-3 8 0s5 3 8 0M2 15c3-3 5-3 8 0s5 3 8 0"/>',
   period:'<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
   current:'<path d="M3 12h14M14 8l4 4-4 4M3 7h7M3 17h7"/>',
+  tide:'<path d="M2 16c3-3 5-3 8 0s5 3 8 0M12 4v7M9.5 8.5L12 11l2.5-2.5"/>',
+  tidenext:'<circle cx="12" cy="9.5" r="6"/><path d="M12 6.5v3l2 1.2M3 20c3-2.5 6-2.5 9 0s6 2.5 9 0"/>',
   vis:'<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"/><circle cx="12" cy="12" r="2.6"/>',
   rain:'<path d="M12 3.5c3 4 5.5 7 5.5 10a5.5 5.5 0 1 1-11 0c0-3 2.5-6 5.5-10z"/>',
   tair:'<path d="M10 4a2 2 0 1 1 4 0v9.2a4.5 4.5 0 1 1-4 0z"/><path d="M12 9v7"/>',
@@ -417,6 +421,8 @@ const ROWS = [
   ['wave',   'Волны',        'wave'],
   ['period', 'Период',       'period'],
   ['current','Течение',      'current'],
+  ['tide',   'Прилив',       'tide'],
+  ['tidenext','Ближайшая вода','tidenext'],
   ['vis',    'Видимость',    'vis'],
   ['rain',   'Осадки',       'rain'],
   ['tair',   'Темп. воздуха','tair'],
@@ -430,7 +436,10 @@ document.getElementById('panel').innerHTML = ROWS.map(([id,label,icon]) => `
     <div class="lbl">${label}</div>
     <div class="lead"></div>
     <div class="val" id="v-${id}">—</div>
-  </div>`).join('');
+  </div>`).join('') +
+  `<div class="tiderow" id="tideRow" style="display:none">
+     <svg id="tideSvg" viewBox="0 0 260 44" preserveAspectRatio="none"></svg>
+   </div>`;
 
 const fmt = (n,d=1) => (n==null || isNaN(n)) ? '—' : (+n).toFixed(d).replace('.',',').replace(/,0$/,'');
 function setVal(id, num, unit, dirDeg){
@@ -505,6 +514,28 @@ async function loadWeather(){
   }
 }
 
+async function loadTides(){
+  try{
+    const ctr = map.getCenter();
+    const r = await fetchJSON(`https://marine-api.open-meteo.com/v1/marine?latitude=${ctr.lat.toFixed(3)}&longitude=${ctr.lng.toFixed(3)}`+
+      `&hourly=sea_level_height_msl&forecast_days=3&timezone=auto&cell_selection=sea`);
+    const T = r.hourly.time, H = r.hourly.sea_level_height_msl;
+    const nowLoc = new Date(Date.now() + (r.utc_offset_seconds||0)*1000).toISOString().slice(0,13);
+    let i0 = T.findIndex(t => t.startsWith(nowLoc)); if (i0 < 0) i0 = 0;
+    const times = T.slice(i0, i0+36), h = H.slice(i0, i0+36);
+    if (h[0] == null) throw 0;
+    // ближайшая полная (ПВ) или малая (МВ) вода
+    let nextLabel = null, nextTime = null;
+    for (let k=1; k<h.length-1; k++){
+      if (h[k] == null) continue;
+      const isMax = h[k] >= h[k-1] && h[k] > h[k+1];
+      const isMin = h[k] <= h[k-1] && h[k] < h[k+1];
+      if (isMax || isMin){ nextLabel = isMax ? 'ПВ' : 'МВ'; nextTime = times[k].slice(11,16); break; }
+    }
+    W.tide = { h, times, nextLabel, nextTime };
+  }catch(_){ W.tide = null; }
+}
+
 async function loadWindField(){
   const vb = viewBounds(0.15);
   const s = Math.max(-85, vb.s), n = Math.min(85, vb.n);
@@ -574,6 +605,30 @@ function render(){
   setVal('twater', fmt(W.tWater,0)+'°','C');
   setVal('cloud',  fmt(W.cloud,0),'%');
   setVal('uv',     fmt(W.uv,0),   '');
+
+  // приливы
+  const tr = document.getElementById('tideRow');
+  if (W.tide && W.tide.h && W.tide.h[0]!=null){
+    const h0 = W.tide.h[0], rising = (W.tide.h[1] ?? h0) >= h0;
+    setVal('tide', (h0>=0?'+':'−')+fmt(Math.abs(h0),2), 'м', rising ? 180 : 0);
+    setVal('tidenext', W.tide.nextTime || '—', W.tide.nextLabel || '');
+    // кривая уровня на 36 часов
+    const H = W.tide.h.filter(v=>v!=null), n = H.length;
+    if (n > 5){
+      let mn = Math.min(...H), mx = Math.max(...H);
+      if (mx-mn < 0.06){ const c=(mx+mn)/2; mx=c+0.03; mn=c-0.03; }
+      const X = i => (i/(n-1)*260).toFixed(1), Y = v => (38 - (v-mn)/(mx-mn)*30).toFixed(1);
+      let d = 'M'+X(0)+','+Y(H[0]);
+      for (let i=1;i<n;i++) d += ' L'+X(i)+','+Y(H[i]);
+      document.getElementById('tideSvg').innerHTML =
+        `<path d="${d}" fill="none" stroke="rgba(201,179,126,.6)" stroke-width="1.3"/>`+
+        `<circle cx="${X(0)}" cy="${Y(H[0])}" r="2.6" fill="#e8d9ae"/>`;
+      tr.style.display = 'block';
+    } else tr.style.display = 'none';
+  } else {
+    setVal('tide','—',''); setVal('tidenext','—','');
+    tr.style.display = 'none';
+  }
 
   const c = comfort();
   document.getElementById('cScore').textContent = c.s;
@@ -1119,7 +1174,7 @@ btnRefresh.onclick = () => refresh(true);
 async function refresh(spin){
   if (spin){ btnRefresh.style.transform='rotate(360deg)'; btnRefresh.style.transition='transform .8s';
     setTimeout(()=>{btnRefresh.style.transform='';btnRefresh.style.transition='';},850); }
-  await Promise.allSettled([loadWeather(), loadWindField()]);
+  await Promise.allSettled([loadWeather(), loadWindField(), loadTides()]);
   render();
 }
 render();                                // сразу показываем демо-значения
