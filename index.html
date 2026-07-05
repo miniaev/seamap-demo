@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>SEAMAP · Côte d'Azur</title>
+<title>SEAMAP</title>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -364,7 +364,9 @@ function updateTitleByPlace(){
     if (d<bd){ bd=d; best=k; }
   }
   const isPreset = bd < 1.6;
-  document.getElementById('locTitle').textContent = isPreset ? 'SEAMAP · '+LOCATIONS[best].label : 'SEAMAP';
+  const t = isPreset ? 'SEAMAP · '+LOCATIONS[best].label : 'SEAMAP';
+  document.getElementById('locTitle').textContent = t;
+  document.title = t;                       // заголовок вкладки следует за картой
   document.querySelectorAll('.locs button').forEach(b => b.classList.toggle('on', isPreset && b.dataset.k===best));
 }
 
