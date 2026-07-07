@@ -165,6 +165,8 @@
   .pp span{font-family:'Jost',sans-serif;font-size:8px;font-weight:300;letter-spacing:.14em;
     color:var(--text-dim);text-transform:uppercase;white-space:nowrap}
   .pp b{font-family:'Cormorant Garamond',serif;font-size:13.5px;font-weight:500;color:var(--text);text-align:right}
+  .ppn{font-family:'Cormorant Garamond',serif;font-style:italic;font-size:12.5px;line-height:1.35;
+    color:rgba(233,228,214,.75);margin-top:7px;max-width:230px}
 
   .maplibregl-ctrl-attrib{display:none!important}
 
@@ -250,6 +252,7 @@
   <button id="btnGeo" title="Моя позиция"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.5"/><path d="M12 2v3.5M12 18.5V22M2 12h3.5M18.5 12H22"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/></svg></button>
   <button id="btnPan" title="Пантеон"><svg viewBox="0 0 24 24"><path d="M3.5 8.8h17M12 3L3.5 8.8h17L12 3zM5.5 8.8v8.7M9.7 8.8v8.7M14.3 8.8v8.7M18.5 8.8v8.7M4 17.5h16M3 20.5h18"/></svg></button>
   <button id="btnShips" title="Суда (AIS)"><svg viewBox="0 0 24 24"><path d="M4 15h16l-2 4H6zM12 4v11M12 5c3 1 5 3 6 6"/></svg></button>
+  <button id="btnWrecks" title="Затонувшие суда"><svg viewBox="0 0 24 24"><path d="M3 14c3-2.5 6-2.5 9 0s6 2.5 9 0M6.5 13.5L8 7l6.5 1.5-1 5M10 7.5V4l3.5 2"/></svg></button>
   <button id="btnTheme" title="День / ночь"><svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
   <button id="btnRefresh" title="Обновить"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 6.3M20 5v6h-6"/></svg></button>
   <button id="btnFull" title="Во весь экран"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
@@ -401,6 +404,8 @@ map.on('moveend', () => {
   mvTimer = setTimeout(() => scheduleReload(false), 500);
   clearTimeout(aisTimer);
   aisTimer = setTimeout(aisRefresh, 800);   // подписка AIS следует за картой
+  clearTimeout(wrecksTimer);
+  wrecksTimer = setTimeout(loadWrecks, 900);   // рэки — под текущее окно
   try{ const c = map.getCenter();
     localStorage.setItem('seamap_view_v1', JSON.stringify({c:[c.lng,c.lat], z:map.getZoom()}));
   }catch(_){}
@@ -829,12 +834,17 @@ setInterval(() => { const now=Date.now();
 // карточка судна по клику
 map.on('click', e => {
   if (aisPopup){ aisPopup.remove(); aisPopup = null; }
-  if (!showShips) return;
+  if (!showShips && !showWrecks) return;
   let best=null, bd=14;
-  for (const s of ships.values()){
+  if (showShips) for (const s of ships.values()){
     const pt = map.project([s.lon,s.lat]);
     const d = Math.hypot(pt.x-e.point.x, pt.y-e.point.y);
     if (d<bd){ bd=d; best=s; }
+  }
+  if (showWrecks) for (const wq of wrecks.values()){
+    const pt = map.project([wq.lon,wq.lat]);
+    const d = Math.hypot(pt.x-e.point.x, pt.y-e.point.y);
+    if (d<bd){ bd=d; best={ wreck:wq, o:wq }; }
   }
   for (const y of PANTHEON){                       // яхты Пантеона тоже кликабельны
     const p = panData[y.key]; if (!y.name || !p || p.lon==null) continue;
@@ -863,6 +873,32 @@ map.on('click', e => {
       + row('Флаг', o.mmsiActive ? midFlag(o.mmsiActive) : null)
       + row('Позиция', pos)
       + row('Обновлено', agoText(o.ts) + (o.fb ? ' · архив' : ''));
+  } else if (best.wreck){
+    const q = best.wreck.p, k = best.wreck.kind;
+    const val = v => (v==null || v==='' || v==='n/a' || v==='0' || v===0 || v==='-1' || v==='None reported')
+      ? null : String(v).replace(/</g,'&lt;');
+    html = `<div class="ais-name">${val(q.name) || 'Неизвестный объект'}</div>
+      <div class="ais-meta">Затонувшее судно · ${k==='heritage' ? (val(q.source_inf)||'EMODnet Heritage') : 'UKHO / EMODnet'}</div>`;
+    let story;
+    if (k === 'heritage'){
+      html += row('Тип', val(q.obj_type)) + row('Датировка', val(q.dating))
+        + row('Год гибели', val(q.sink_yr))
+        + row('Глубина', val(q.depth_info) && val(q.depth_info)+' м')
+        + row('Тоннаж', val(q.est_tonnag)) + row('Длина', val(q.object_length) && q.object_length+' м')
+        + row('Охрана', val(q.statutory)) + row('Страна', val(q.country)) + row('Период', val(q.period));
+      story = val(q.sink_context) || val(q.obj_desc);
+    } else {
+      html += row('Тип', val(q.type)) + row('Категория', val(q.wreck_cate))
+        + row('Дата гибели', val(q.date_sunk)) + row('Флаг', val(q.flag))
+        + row('Глубина над объектом', val(q.depth) && q.depth+' м')
+        + row('Глубина места', val(q.water_dept) && q.water_dept+' м')
+        + row('Тоннаж', val(q.tonnage)) + row('Длина', val(q.length) && q.length+' м')
+        + row('Состояние', val(q.status)) + row('Обнаружен', val(q.last_detec))
+        + row('Груз', val(q.cargo));
+      story = val(q.circumstan);
+    }
+    if (story) html += `<div class="ppn">${story.slice(0,220)}${story.length>220?'…':''}</div>`;
+    html += row('Позиция', pos);
   } else {
     html = `<div class="ais-name">${esc(o.name||'БЕЗ ИМЕНИ')}</div>
       <div class="ais-meta">${o.mmsi ? 'MMSI '+o.mmsi : ''}</div>`
@@ -1021,6 +1057,40 @@ btnPan.onclick = openPantheon;
 document.getElementById('pantheon').addEventListener('click', e => { if (e.target.id==='pantheon') closePantheon(); });
 addEventListener('keydown', e => { if (e.key==='Escape') closePantheon(); });
 
+/* ================= ЗАТОНУВШИЕ СУДА — EMODnet / UKHO ================= */
+let showWrecks = false, wrecks = new Map(), wrecksTimer = null;
+async function loadWrecks(){
+  if (!showWrecks || map.getZoom() < 6.5) return;
+  const b = viewBounds(0.1);
+  const bbox = `${Math.max(-85,b.s).toFixed(3)},${Math.max(-180,b.w).toFixed(3)},`+
+               `${Math.min(85,b.n).toFixed(3)},${Math.min(180,b.e).toFixed(3)},urn:ogc:def:crs:EPSG::4326`;
+  const mk = l => `https://ows.emodnet-humanactivities.eu/wfs?service=WFS&version=2.0.0&request=GetFeature`+
+                  `&typeNames=${l}&outputFormat=application/json&count=400&bbox=${bbox}`;
+  const [h,w] = await Promise.allSettled([
+    fetchJSON(mk('emodnet:heritageshipwrecks')),
+    fetchJSON(mk('emodnet:wwshipwrecks'))
+  ]);
+  const add = (res, kind) => {
+    if (res.status!=='fulfilled' || !res.value.features) return;
+    for (const f of res.value.features){
+      if (!f.geometry || f.geometry.type!=='Point') continue;
+      const [lon,lat] = f.geometry.coordinates;
+      wrecks.set(kind+':'+(f.id || lon+','+lat), { lon, lat, kind, p:f.properties||{} });
+    }
+  };
+  add(h,'heritage'); add(w,'ww');
+  if (wrecks.size > 1200){                    // не даём разрастись
+    const bb = viewBounds(0.6);
+    for (const [k,v] of wrecks)
+      if (v.lon<bb.w||v.lon>bb.e||v.lat<bb.s||v.lat>bb.n) wrecks.delete(k);
+  }
+}
+btnWrecks.onclick = () => {
+  showWrecks = !showWrecks;
+  dim(btnWrecks, showWrecks);
+  if (showWrecks) loadWrecks();
+};
+
 /* ================= ANIMATION LOOP ================= */
 map.on('move', () => { wctx.clearRect(0,0,windC.width,windC.height); particles.forEach(p=>{p.px=null;}); });
 
@@ -1147,6 +1217,25 @@ function frame(){
       actx.font = '400 9.5px Jost, sans-serif';
       actx.fillStyle = 'rgba(236,222,182,.9)';
       actx.fillText(y.name.toUpperCase(), pt.x+11, pt.y+3.5);
+    }
+  }
+
+  /* --- затонувшие суда (картографический символ рэка) --- */
+  if (showWrecks){
+    actx.strokeStyle = 'rgba(224,132,100,.85)';
+    actx.lineWidth = 1.2; actx.lineCap = 'round';
+    for (const wq of wrecks.values()){
+      const pt = map.project([wq.lon,wq.lat]);
+      if (pt.x<-20||pt.x>elW+20||pt.y<-20||pt.y>elH+20) continue;
+      actx.save(); actx.translate(pt.x,pt.y);
+      actx.beginPath();
+      actx.moveTo(-5,0); actx.lineTo(5,0);                        // ватерлиния
+      actx.moveTo(-3.2,0); actx.quadraticCurveTo(0,4.4,3.2,0);    // корпус
+      actx.moveTo(-1.6,0); actx.lineTo(-1.6,-3);
+      actx.moveTo(0,0);    actx.lineTo(0,-4);
+      actx.moveTo(1.6,0);  actx.lineTo(1.6,-3);
+      actx.stroke();
+      actx.restore();
     }
   }
   requestAnimationFrame(frame);
