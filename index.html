@@ -779,12 +779,22 @@ addEventListener('pagehide', saveShips);
 
 function aisBounds(){
   const b = viewBounds(0.25);
-  return [[[Math.max(-85,b.s), Math.max(-180,b.w)], [Math.min(85,b.n), Math.min(180,b.e)]]];
+  const boxes = [[[Math.max(-85,b.s), Math.max(-180,b.w)], [Math.min(85,b.n), Math.min(180,b.e)]]];
+  // рамки вокруг последних позиций яхт Пантеона — трекинг через тот же сокет
+  try{
+    for (const y of PANTHEON){
+      const p = panData[y.key];
+      if (y.name && p && p.lat!=null)
+        boxes.push([[Math.max(-85,p.lat-0.5), Math.max(-180,p.lon-0.5)],
+                    [Math.min(85,p.lat+0.5),  Math.min(180,p.lon+0.5)]]);
+    }
+  }catch(_){}
+  return boxes;
 }
 function aisSubscribe(){
   if (!aisWS || aisWS.readyState !== 1) return;
   aisWS.send(JSON.stringify({ APIKey:AIS_KEY, BoundingBoxes:aisBounds(),
-    FilterMessageTypes:['PositionReport'] }));
+    FilterMessageTypes:['PositionReport','ShipStaticData'] }));
 }
 function aisConnect(){
   if (aisWS){ try{ aisWS.onclose=null; aisWS.close(); }catch(_){} }
@@ -794,6 +804,9 @@ function aisConnect(){
   aisWS.onmessage = ev => {
     try{
       const m = JSON.parse(typeof ev.data === 'string' ? ev.data : new TextDecoder().decode(ev.data));
+      const mdp = m.MetaData || {};
+      let yv = null; try{ yv = yachtByMMSI(mdp.MMSI); }catch(_){}
+      if (yv){ try{ panUpdate(yv, m, mdp); }catch(_){} return; }   // яхта Пантеона
       if (m.MessageType !== 'PositionReport') return;
       const p = m.Message.PositionReport, md = m.MetaData || {};
       const id = md.MMSI ?? p.UserID;
@@ -808,7 +821,10 @@ function aisConnect(){
     }catch(_){}
   };
   aisWS.onclose = () => {
-    if (showShips && aisRetry < 6){ aisRetry++; setTimeout(aisConnect, 2000*aisRetry); }
+    if (showShips && aisRetry < 10){
+      aisRetry++;
+      setTimeout(aisConnect, Math.min(60000, 4000*aisRetry));   // мягкий бэк-офф
+    }
   };
 }
 function aisRefresh(){
@@ -942,53 +958,35 @@ for (const k in PAN_FALLBACK){
   }
 }
 
-let panWS = null, panRetry = 0;
-
+/* Пантеон слушает тот же единственный сокет aisstream (см. aisWS.onmessage):
+   отдельное соединение упиралось в лимит одновременных подключений. */
 function yachtByMMSI(m){ m = String(m); return PANTHEON.find(y => y.mmsi && y.mmsi.includes(m)); }
-function panConnect(){
-  if (panWS){ try{ panWS.onclose=null; panWS.close(); }catch(_){} }
-  try{ panWS = new WebSocket('wss://stream.aisstream.io/v0/stream'); }catch(_){ return; }
-  panWS.binaryType = 'arraybuffer';
-  panWS.onopen = () => { panRetry = 0;
-    panWS.send(JSON.stringify({ APIKey:AIS_KEY,
-      BoundingBoxes:[[[-90,-180],[90,180]]],
-      FiltersShipMMSI: PANTHEON.flatMap(y => y.mmsi || []),
-      FilterMessageTypes:['PositionReport','ShipStaticData'] }));
-  };
-  panWS.onmessage = ev => {
-    try{
-      const m = JSON.parse(typeof ev.data==='string' ? ev.data : new TextDecoder().decode(ev.data));
-      const md = m.MetaData || {};
-      const y = yachtByMMSI(md.MMSI); if (!y) return;
-      const p = panData[y.key] || {};
-      p.mmsiActive = String(md.MMSI);
-      p.live = true; p.fb = false;          // пришли живые данные — архив больше не нужен
-      if (m.MessageType === 'PositionReport'){
-        const r = m.Message.PositionReport;
-        p.lon = r.Longitude; p.lat = r.Latitude;
-        if (r.Sog!=null && r.Sog<102) p.sog = r.Sog;
-        if (r.Cog!=null && r.Cog<360) p.cog = r.Cog;
-        if (r.TrueHeading!=null && r.TrueHeading<360) p.heading = r.TrueHeading;
-        p.nav = r.NavigationalStatus;
-        p.ts = Date.now();
-      } else if (m.MessageType === 'ShipStaticData'){
-        const s = m.Message.ShipStaticData;
-        if ((s.CallSign||'').trim()) p.callsign = s.CallSign.trim();
-        if ((s.Destination||'').trim()) p.dest = s.Destination.trim();
-        if (s.MaximumStaticDraught) p.draught = s.MaximumStaticDraught;
-        if (s.Dimension){
-          const L=(s.Dimension.A||0)+(s.Dimension.B||0), B=(s.Dimension.C||0)+(s.Dimension.D||0);
-          if (L) p.len = L; if (B) p.beam = B;
-        }
-        if (s.Eta && s.Eta.Month) p.eta = s.Eta;
-      }
-      panData[y.key] = p;
-      try{ localStorage.setItem('seamap_pan_v1', JSON.stringify(panData)); }catch(_){}
-    }catch(_){}
-  };
-  panWS.onclose = () => { if (panRetry<6){ panRetry++; setTimeout(panConnect, 3000*panRetry); } };
+function panUpdate(y, m, md){
+  const p = panData[y.key] || {};
+  p.mmsiActive = String(md.MMSI);
+  p.live = true; p.fb = false;          // пришли живые данные — архив больше не нужен
+  if (m.MessageType === 'PositionReport'){
+    const r = m.Message.PositionReport;
+    p.lon = r.Longitude; p.lat = r.Latitude;
+    if (r.Sog!=null && r.Sog<102) p.sog = r.Sog;
+    if (r.Cog!=null && r.Cog<360) p.cog = r.Cog;
+    if (r.TrueHeading!=null && r.TrueHeading<360) p.heading = r.TrueHeading;
+    p.nav = r.NavigationalStatus;
+    p.ts = Date.now();
+  } else if (m.MessageType === 'ShipStaticData'){
+    const s = m.Message.ShipStaticData;
+    if ((s.CallSign||'').trim()) p.callsign = s.CallSign.trim();
+    if ((s.Destination||'').trim()) p.dest = s.Destination.trim();
+    if (s.MaximumStaticDraught) p.draught = s.MaximumStaticDraught;
+    if (s.Dimension){
+      const L=(s.Dimension.A||0)+(s.Dimension.B||0), B=(s.Dimension.C||0)+(s.Dimension.D||0);
+      if (L) p.len = L; if (B) p.beam = B;
+    }
+    if (s.Eta && s.Eta.Month) p.eta = s.Eta;
+  }
+  panData[y.key] = p;
+  try{ localStorage.setItem('seamap_pan_v1', JSON.stringify(panData)); }catch(_){}
 }
-panConnect();
 
 const WIFI = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2.5 9.5c5.5-5 13.5-5 19 0M5.5 12.7c4-3.6 9-3.6 13 0M8.7 15.8c2-1.8 4.6-1.8 6.6 0"/><circle cx="12" cy="19" r="1.4" fill="currentColor" stroke="none"/></svg>';
 const NAVTXT = {0:'В пути',1:'На якоре',2:'Не управляется',3:'Ограничен в манёвре',5:'У причала',8:'Под парусом'};
